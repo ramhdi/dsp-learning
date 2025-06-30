@@ -198,8 +198,8 @@ bool pluto_start_streaming(void) {
     iio_channel_enable(rx0_i);
     iio_channel_enable(rx0_q);
 
-    printf("* Creating non-cyclic IIO buffer with 256 KiS\n");
-    rxbuf = iio_device_create_buffer(rx, 256 * 1024, false);
+    printf("* Creating non-cyclic IIO buffer with %d KiS\n", IIO_BUFFER_SIZE);
+    rxbuf = iio_device_create_buffer(rx, IIO_BUFFER_SIZE * 1024, false);
     if (!rxbuf) {
         printf("Could not create RX buffer\n");
         return false;
