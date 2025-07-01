@@ -4,11 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int decimation_counter = 0;
-
 void processing_state_init(processing_state_t* state) {
     memset(state, 0, sizeof(*state));
-    decimation_counter = 0;
 }
 
 float apply_simple_filter(float input, float alpha, float* prev_output) {
@@ -53,10 +50,9 @@ sdr_result_t fm_demodulate_samples(const iq_samples_t* input,
         float audio_sample = phase_diff * config->sample_rate_hz /
                              ((2.0f * M_PI) * DSP_FM_DEVIATION_HZ);
 
-        // Decimation and de-emphasis filtering
-        decimation_counter++;
-        if (decimation_counter >= config->decimation_factor) {
-            decimation_counter = 0;
+        state->decimation_counter++;
+        if (state->decimation_counter >= config->decimation_factor) {
+            state->decimation_counter = 0;
 
             // Apply de-emphasis filter (75μs time constant)
             audio_sample = apply_simple_filter(

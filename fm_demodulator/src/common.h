@@ -92,6 +92,7 @@ typedef struct {
     float de_emphasis_state;
     uint64_t samples_processed;
     float avg_signal_level;
+    int decimation_counter;
 } processing_state_t;
 
 typedef struct {
