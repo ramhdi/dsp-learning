@@ -24,15 +24,16 @@ sdr_result_t fm_demodulate_samples(const iq_samples_t* input,
         return SDR_ERROR_INVALID_CONFIG;
     }
 
-    const float dc_alpha = 0.001f;
     output->count = 0;
 
     for (size_t n = 0; n < input->count; n++) {
-        float i = (float)input->i_samples[n] / 32768.0f;
-        float q = (float)input->q_samples[n] / 32768.0f;
+        float i = (float)input->i_samples[n] / DSP_INT16_TO_FLOAT_SCALE;
+        float q = (float)input->q_samples[n] / DSP_INT16_TO_FLOAT_SCALE;
 
-        state->dc_i = dc_alpha * i + (1.0f - dc_alpha) * state->dc_i;
-        state->dc_q = dc_alpha * q + (1.0f - dc_alpha) * state->dc_q;
+        state->dc_i = DSP_DC_FILTER_ALPHA * i +
+                      (1.0f - DSP_DC_FILTER_ALPHA) * state->dc_i;
+        state->dc_q = DSP_DC_FILTER_ALPHA * q +
+                      (1.0f - DSP_DC_FILTER_ALPHA) * state->dc_q;
         i -= state->dc_i;
         q -= state->dc_q;
 
@@ -40,27 +41,32 @@ sdr_result_t fm_demodulate_samples(const iq_samples_t* input,
         float phase_diff = phase - state->prev_phase;
 
         if (phase_diff > M_PI) {
-            phase_diff -= 2.0f * M_PI;
+            phase_diff -= (2.0f * M_PI);
         } else if (phase_diff < -M_PI) {
-            phase_diff += 2.0f * M_PI;
+            phase_diff += (2.0f * M_PI);
         }
 
         state->prev_phase = phase;
 
-        float audio_sample =
-            phase_diff * config->sample_rate_hz / (2.0f * M_PI * 75000.0f);
+        // Convert phase difference to audio sample
+        // Scale by sample rate and normalize by FM deviation (75 kHz)
+        float audio_sample = phase_diff * config->sample_rate_hz /
+                             ((2.0f * M_PI) * DSP_FM_DEVIATION_HZ);
 
+        // Decimation and de-emphasis filtering
         decimation_counter++;
         if (decimation_counter >= config->decimation_factor) {
             decimation_counter = 0;
 
-            audio_sample = apply_simple_filter(audio_sample, 0.217,
-                                               &state->de_emphasis_state);
+            // Apply de-emphasis filter (75μs time constant)
+            audio_sample = apply_simple_filter(
+                audio_sample, DSP_DEEMPHASIS_ALPHA, &state->de_emphasis_state);
 
             if (output->count >= output->capacity) {
                 return SDR_ERROR_BUFFER_FULL;
             }
 
+            // Clamp audio to prevent distortion
             float clamped =
                 fmaxf(-config->max_audio_amplitude,
                       fminf(config->max_audio_amplitude, audio_sample));

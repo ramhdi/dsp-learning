@@ -24,12 +24,12 @@ static long long parse_frequency(const char* freq_str) {
         return -1;
     }
 
-    long long freq_hz = (long long)(freq_mhz * 1000000.0);
+    long long freq_hz = (long long)(freq_mhz * HZ_TO_MHZ);
 
-    if (freq_hz < MHZ(70) || freq_hz > MHZ(120)) {
+    if (freq_hz < MHZ(FM_BAND_MIN_MHZ) || freq_hz > MHZ(FM_BAND_MAX_MHZ)) {
         fprintf(stderr,
-                "Frequency %.1f MHz is outside typical FM band (70-120 MHz)\n",
-                freq_mhz);
+                "Frequency %.1f MHz is outside typical FM band (%d-%d MHz)\n",
+                freq_mhz, FM_BAND_MIN_MHZ, FM_BAND_MAX_MHZ);
         fprintf(stderr, "Continuing anyway...\n");
     }
 
@@ -39,12 +39,14 @@ static long long parse_frequency(const char* freq_str) {
 static void show_usage(const char* progname) {
     printf("Usage: %s [options] [frequency_MHz] [pluto_uri]\n", progname);
     printf("\nOptions:\n");
-    printf("  frequency_MHz  FM station frequency in MHz (default: 101.1)\n");
+    printf("  frequency_MHz  FM station frequency in MHz (default: %.1f)\n",
+           SDR_DEFAULT_FREQ_MHZ);
     printf("  pluto_uri      PlutoSDR URI (default: auto-detect)\n");
     printf("\nExamples:\n");
-    printf("  %s                    # Use default frequency 101.1 MHz\n",
-           progname);
-    printf("  %s 101.1              # Tune to 101.1 MHz\n", progname);
+    printf("  %s                    # Use default frequency %.1f MHz\n",
+           progname, SDR_DEFAULT_FREQ_MHZ);
+    printf("  %s %.1f              # Tune to %.1f MHz\n", progname,
+           SDR_DEFAULT_FREQ_MHZ, SDR_DEFAULT_FREQ_MHZ);
     printf("  %s 95.5 ip:192.168.2.1  # Tune to 95.5 MHz on specific Pluto\n",
            progname);
     printf("\n");
@@ -52,7 +54,7 @@ static void show_usage(const char* progname) {
 
 int main(int argc, char** argv) {
     char* pluto_uri = NULL;
-    long long center_freq = MHZ(101.1);
+    long long center_freq = MHZ(SDR_DEFAULT_FREQ_MHZ);
     uint64_t samples_received = 0;
     time_t last_status = time(NULL);
 
@@ -78,7 +80,7 @@ int main(int argc, char** argv) {
     signal(SIGINT, handle_sig);
 
     sdr_config_t config;
-    if (center_freq != MHZ(101.1)) {
+    if (center_freq != MHZ(SDR_DEFAULT_FREQ_MHZ)) {
         sdr_config_t base = sdr_config_default();
         config = sdr_config_with_frequency(&base, center_freq);
     } else {
@@ -86,8 +88,9 @@ int main(int argc, char** argv) {
     }
 
     printf("* FM Demodulator for ADALM-PLUTO\n");
-    printf("* Frequency: %.1f MHz\n", config.center_freq_hz / 1e6);
-    printf("* Sample Rate: %.1f MSPS\n", config.sample_rate_hz / 1e6);
+    printf("* Frequency: %.1f MHz\n", config.center_freq_hz / HZ_TO_MHZ);
+    printf("* Sample Rate: %.1f MSPS\n",
+           config.sample_rate_hz / SAMPLES_TO_MEGASAMPLES);
     printf("* Audio Rate: %d Hz\n", config.audio_sample_rate);
     printf("* Decimation Factor: %d\n", config.decimation_factor);
     printf("* Gain Control Mode: %s\n", config.gain_control_mode);
@@ -105,7 +108,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    audio_ring_buffer_t ring_buffer = create_audio_ring_buffer(81920);
+    audio_ring_buffer_t ring_buffer =
+        create_audio_ring_buffer(AUDIO_RING_BUFFER_SIZE);
     if (!ring_buffer.ring_buffer) {
         printf("Failed to create audio ring buffer\n");
         destroy_sdr_interface(sdr);
@@ -132,10 +136,9 @@ int main(int argc, char** argv) {
     processing_state_t processing_state;
     processing_state_init(&processing_state);
 
-    const size_t max_iq_samples = 655360;
-    int16_t* i_buffer = malloc(max_iq_samples * sizeof(int16_t));
-    int16_t* q_buffer = malloc(max_iq_samples * sizeof(int16_t));
-    float* audio_temp = malloc(32768 * sizeof(float));
+    int16_t* i_buffer = malloc(SDR_MAX_IQ_SAMPLES * sizeof(int16_t));
+    int16_t* q_buffer = malloc(SDR_MAX_IQ_SAMPLES * sizeof(int16_t));
+    float* audio_temp = malloc(AUDIO_MAIN_BUFFER_SIZE * sizeof(float));
 
     if (!i_buffer || !q_buffer || !audio_temp) {
         printf("Failed to allocate buffers\n");
@@ -150,14 +153,15 @@ int main(int argc, char** argv) {
 
     iq_buffer_t iq_buf = {.i_samples = i_buffer,
                           .q_samples = q_buffer,
-                          .capacity = max_iq_samples,
+                          .capacity = SDR_MAX_IQ_SAMPLES,
                           .count = 0};
 
-    audio_buffer_t audio_buf = audio_buffer_create(audio_temp, 32768);
+    audio_buffer_t audio_buf =
+        audio_buffer_create(audio_temp, AUDIO_MAIN_BUFFER_SIZE);
 
     printf("* Starting FM demodulation (press CTRL+C to stop)\n");
     printf("* Tune a real FM radio to %.1f MHz to verify reception\n",
-           config.center_freq_hz / 1e6);
+           config.center_freq_hz / HZ_TO_MHZ);
 
     while (!stop_flag) {
         result = sdr->read_samples(sdr, &iq_buf);
@@ -189,19 +193,19 @@ int main(int argc, char** argv) {
         samples_received += iq_buf.count;
 
         time_t now = time(NULL);
-        if (now - last_status >= 2) {
+        if (now - last_status >= STATUS_UPDATE_INTERVAL_SEC) {
             float buffer_fill_percent =
                 (float)ring_buffer.count / ring_buffer.capacity * 100.0f;
             printf("\tRX %8.2f MSmp, Audio Buffer: %zu/%zu samples (%.1f%%)\n",
-                   samples_received / 1e6, ring_buffer.count,
+                   samples_received / SAMPLES_TO_MEGASAMPLES, ring_buffer.count,
                    ring_buffer.capacity, buffer_fill_percent);
 
-            if (buffer_fill_percent > 80.0f) {
+            if (buffer_fill_percent > BUFFER_HIGH_THRESHOLD_PCT) {
                 printf(
                     "\tWarning: Audio buffer nearly full - may cause "
                     "dropouts\n");
-            } else if (buffer_fill_percent < 10.0f &&
-                       samples_received > 2500000) {
+            } else if (buffer_fill_percent < BUFFER_LOW_THRESHOLD_PCT &&
+                       samples_received > MIN_SAMPLES_FOR_LOW_WARNING) {
                 printf("\tWarning: Audio buffer low - may cause silence\n");
             }
 

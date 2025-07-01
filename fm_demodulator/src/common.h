@@ -1,12 +1,54 @@
 #ifndef SDR_TYPES_H
 #define SDR_TYPES_H
 
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #define MHZ(x) ((long long)(x * 1000000.0 + .5))
 #define KHZ(x) ((long long)(x * 1000.0 + .5))
+
+// AUDIO CONFIGURATION CONSTANTS
+#define AUDIO_SAMPLE_RATE_HZ 48000
+#define AUDIO_CHANNELS_STEREO 2
+#define AUDIO_FRAMES_PER_BUFFER 256
+#define AUDIO_TEMP_BUFFER_SIZE 512
+#define AUDIO_MAIN_BUFFER_SIZE 32768
+#define AUDIO_RING_BUFFER_SIZE 81920
+#define AUDIO_DEFAULT_AMPLITUDE 0.4f
+
+// SDR HARDWARE CONSTANTS
+#define SDR_DEFAULT_FREQ_MHZ 101.1
+#define SDR_DEFAULT_SAMPLE_RATE_KHZ 2400
+#define SDR_DEFAULT_BANDWIDTH_KHZ 200
+#define SDR_DEFAULT_DECIMATION 50
+#define SDR_DEFAULT_MANUAL_GAIN_DB 72.0f
+#define SDR_BUFFER_SIZE_KIS 640
+#define SDR_MAX_IQ_SAMPLES 655360
+
+// FM band limits
+#define FM_BAND_MIN_MHZ 70
+#define FM_BAND_MAX_MHZ 120
+
+// DSP PROCESSING CONSTANTS
+#define DSP_INT16_TO_FLOAT_SCALE 32768.0f
+#define DSP_DC_FILTER_ALPHA 0.001f
+#define DSP_DEEMPHASIS_ALPHA 0.217f
+#define DSP_FM_DEVIATION_HZ 75000.0f
+
+// BUFFER AND STATUS CONSTANTS
+#define STATUS_UPDATE_INTERVAL_SEC 2
+#define BUFFER_HIGH_THRESHOLD_PCT 80.0f
+#define BUFFER_LOW_THRESHOLD_PCT 10.0f
+#define MIN_SAMPLES_FOR_LOW_WARNING 2500000ULL
+
+// String buffer sizes
+#define TEMP_STRING_BUFFER_SIZE 64
+
+// Unit conversion helpers
+#define SAMPLES_TO_MEGASAMPLES 1e6
+#define HZ_TO_MHZ 1e6
 
 typedef enum {
     SDR_SUCCESS = 0,
@@ -83,15 +125,15 @@ typedef struct audio_interface {
 } audio_interface_t;
 
 static inline sdr_config_t sdr_config_default(void) {
-    return (sdr_config_t){.center_freq_hz = MHZ(101.1),
-                          .sample_rate_hz = KHZ(2400),
-                          .bandwidth_hz = KHZ(200),
+    return (sdr_config_t){.center_freq_hz = MHZ(SDR_DEFAULT_FREQ_MHZ),
+                          .sample_rate_hz = KHZ(SDR_DEFAULT_SAMPLE_RATE_KHZ),
+                          .bandwidth_hz = KHZ(SDR_DEFAULT_BANDWIDTH_KHZ),
                           .rf_port = "A_BALANCED",
-                          .audio_sample_rate = 48000,
-                          .decimation_factor = 50,
-                          .max_audio_amplitude = 0.4f,
+                          .audio_sample_rate = AUDIO_SAMPLE_RATE_HZ,
+                          .decimation_factor = SDR_DEFAULT_DECIMATION,
+                          .max_audio_amplitude = AUDIO_DEFAULT_AMPLITUDE,
                           .gain_control_mode = "fast_attack",
-                          .manual_gain_db = 72.0f};
+                          .manual_gain_db = SDR_DEFAULT_MANUAL_GAIN_DB};
 }
 
 static inline sdr_config_t sdr_config_with_frequency(const sdr_config_t* base,

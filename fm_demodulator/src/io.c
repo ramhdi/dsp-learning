@@ -57,7 +57,7 @@ static void wr_ch_double(struct iio_channel *chn, const char *what,
 }
 
 static char *get_ch_name(const char *type, int id) {
-    static char tmpstr[64];
+    static char tmpstr[TEMP_STRING_BUFFER_SIZE];
     snprintf(tmpstr, sizeof(tmpstr), "%s%d", type, id);
     return tmpstr;
 }
@@ -224,16 +224,18 @@ static int portaudio_callback(const void *inputBuffer, void *outputBuffer,
     (void)timeInfo;
     (void)statusFlags;
 
-    float temp_buffer[512];
+    float temp_buffer[AUDIO_TEMP_BUFFER_SIZE];
     audio_buffer_t output_buf = audio_buffer_create(
-        temp_buffer, framesPerBuffer < 512 ? framesPerBuffer : 512);
+        temp_buffer, framesPerBuffer < AUDIO_TEMP_BUFFER_SIZE
+                         ? framesPerBuffer
+                         : AUDIO_TEMP_BUFFER_SIZE);
 
     size_t samples_read = audio_ring_read(impl->ring_buffer, &output_buf);
 
     for (unsigned long i = 0; i < framesPerBuffer; i++) {
         float sample = (i < samples_read) ? output_buf.samples[i] : 0.0f;
-        *out++ = sample;
-        *out++ = sample;
+        *out++ = sample;  // Left channel
+        *out++ = sample;  // Right channel (stereo)
     }
 
     return paContinue;
@@ -274,7 +276,7 @@ sdr_interface_t *create_pluto_sdr(const char *uri) {
     if (!impl) return NULL;
 
     memset(impl, 0, sizeof(*impl));
-    impl->buffer_size_kis = 640;
+    impl->buffer_size_kis = SDR_BUFFER_SIZE_KIS;
 
     if (uri) {
         impl->ctx = iio_create_context_from_uri(uri);
@@ -343,8 +345,8 @@ audio_interface_t *create_portaudio_output(audio_ring_buffer_t *ring_buffer) {
     }
 
     impl->ring_buffer = ring_buffer;
-    impl->sample_rate = 48000;
-    impl->frames_per_buffer = 256;
+    impl->sample_rate = AUDIO_SAMPLE_RATE_HZ;
+    impl->frames_per_buffer = AUDIO_FRAMES_PER_BUFFER;
 
     PaStreamParameters outputParameters = {0};
     outputParameters.device = Pa_GetDefaultOutputDevice();
@@ -354,7 +356,7 @@ audio_interface_t *create_portaudio_output(audio_ring_buffer_t *ring_buffer) {
         return NULL;
     }
 
-    outputParameters.channelCount = 2;
+    outputParameters.channelCount = AUDIO_CHANNELS_STEREO;
     outputParameters.sampleFormat = paFloat32;
     outputParameters.suggestedLatency =
         Pa_GetDeviceInfo(outputParameters.device)->defaultLowOutputLatency;
