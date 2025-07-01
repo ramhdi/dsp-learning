@@ -103,7 +103,7 @@ bool audio_init(void) {
 
     printf("* Audio initialized - Sample Rate: %d Hz\n", AUDIO_SAMPLE_RATE);
     printf("* Audio buffer size: %d samples\n", AUDIO_BUFFER_SIZE);
-    printf("* Audio decimation factor: %lld\n", AUDIO_DECIMATION_FACTOR);
+    printf("* Audio decimation factor: %d\n", AUDIO_DECIMATION_FACTOR);
     return true;
 }
 

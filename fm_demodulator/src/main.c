@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "audio.h"
 #include "common.h"
@@ -63,6 +64,7 @@ static void show_usage(const char *progname) {
 int main(int argc, char **argv) {
     char *pluto_uri = NULL;
     size_t nrx = 0;
+    time_t last_status = time(NULL);
 
     if (argc > 1) {
         if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
@@ -92,8 +94,13 @@ int main(int argc, char **argv) {
 
     printf("* FM Demodulator for ADALM-PLUTO\n");
     printf("* Frequency: %.1f MHz\n", g_fm_center_freq / 1e6);
-    printf("* Sample Rate: %.1f MSPS\n", FM_SAMPLE_RATE / 1e6);
+    printf("* Sample Rate: %.1f MSPS (corrected for integer decimation)\n",
+           FM_SAMPLE_RATE / 1e6);
     printf("* Audio Rate: %d Hz\n", AUDIO_SAMPLE_RATE);
+    printf("* Decimation Factor: %d (integer)\n", AUDIO_DECIMATION_FACTOR);
+    printf("* IIO Buffer Size: %d KiS\n", IIO_BUFFER_SIZE);
+    printf("* Audio Buffer Size: %d samples (%.2f seconds)\n",
+           AUDIO_BUFFER_SIZE, (float)AUDIO_BUFFER_SIZE / AUDIO_SAMPLE_RATE);
     printf("* Gain Control Mode: %s\n", RX_GAIN_MODE);
 
     if (!pluto_init(pluto_uri)) {
@@ -132,9 +139,26 @@ int main(int argc, char **argv) {
             free(q_samples);
 
             nrx += sample_count;
-            if ((nrx / 1000000) % 5 == 0) {
-                printf("\tRX %8.2f MSmp, Audio Buffer: %d samples\n", nrx / 1e6,
-                       g_demod_state.buffer_count);
+
+            time_t now = time(NULL);
+            if (now - last_status >= 2) {  // Every 2 seconds
+                float buffer_fill_percent = (float)g_demod_state.buffer_count /
+                                            AUDIO_BUFFER_SIZE * 100.0f;
+                printf(
+                    "\tRX %8.2f MSmp, Audio Buffer: %d/%d samples (%.1f%%)\n",
+                    nrx / 1e6, g_demod_state.buffer_count, AUDIO_BUFFER_SIZE,
+                    buffer_fill_percent);
+
+                // Warn if buffer is getting too full or too empty
+                if (buffer_fill_percent > 80.0f) {
+                    printf(
+                        "\tWarning: Audio buffer nearly full - may cause "
+                        "dropouts\n");
+                } else if (buffer_fill_percent < 10.0f && nrx > 1000000) {
+                    printf("\tWarning: Audio buffer low - may cause silence\n");
+                }
+
+                last_status = now;
             }
         } else {
             printf("Error reading samples\n");
