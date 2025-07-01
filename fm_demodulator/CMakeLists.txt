@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Include our headers
-include_directories(include)
+include_directories(include src)
 
 # Find required packages
 find_package(PkgConfig REQUIRED)
@@ -18,9 +18,8 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2 -g")
 # Source files
 set(SOURCES
     src/main.c
-    src/audio.c
-    src/pluto.c
-    src/demodulator.c
+    src/processing.c
+    src/io.c
 )
 
 # Create executable
