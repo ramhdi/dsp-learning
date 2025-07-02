@@ -27,10 +27,8 @@ sdr_result_t fm_demodulate_samples(const iq_samples_t* input,
         float i = (float)input->i_samples[n] / DSP_INT16_TO_FLOAT_SCALE;
         float q = (float)input->q_samples[n] / DSP_INT16_TO_FLOAT_SCALE;
 
-        state->dc_i = DSP_DC_FILTER_ALPHA * i +
-                      (1.0f - DSP_DC_FILTER_ALPHA) * state->dc_i;
-        state->dc_q = DSP_DC_FILTER_ALPHA * q +
-                      (1.0f - DSP_DC_FILTER_ALPHA) * state->dc_q;
+        state->dc_i = apply_simple_filter(i, DSP_DC_FILTER_ALPHA, &state->dc_i);
+        state->dc_q = apply_simple_filter(q, DSP_DC_FILTER_ALPHA, &state->dc_q);
         i -= state->dc_i;
         q -= state->dc_q;
 
@@ -41,6 +39,10 @@ sdr_result_t fm_demodulate_samples(const iq_samples_t* input,
             phase_diff -= (2.0f * M_PI);
         } else if (phase_diff < -M_PI) {
             phase_diff += (2.0f * M_PI);
+        }
+
+        if (isnan(phase_diff)) {
+            phase_diff = 0.0f;
         }
 
         state->prev_phase = phase;
