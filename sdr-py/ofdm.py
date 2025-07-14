@@ -38,6 +38,7 @@ class OFDMSimulator:
         self.snr_db = snr_db
         self.snr_linear = 10 ** (snr_db / 10.0)  # Precompute linear SNR
         self.channel_taps = channel_taps or [1.0]  # AWGN channel by default
+        self.tx_signal = None
 
         # Modulation parameters
         if modulation == "BPSK":
@@ -315,6 +316,7 @@ class OFDMSimulator:
 
         # Step 3: OFDM modulation
         tx_signal = self.ofdm_modulate(self.tx_symbols)
+        self.tx_signal = tx_signal
         print(f"OFDM signal length: {len(tx_signal)} samples")
 
         # Step 4: Channel simulation
@@ -372,14 +374,14 @@ class OFDMSimulator:
         }
 
     def plot_constellation(self, save_path: Optional[str] = None):
-        """Plot constellation diagrams before and after equalization."""
+        """Plot constellation diagrams and channel frequency response in 2x2 layout."""
         if self.rx_symbols_before_eq is None or self.rx_symbols_after_eq is None:
             print("No simulation data available for constellation plot.")
             return
 
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4))
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
 
-        # Original constellation
+        # 1. Ideal constellation (top-left)
         ax1.scatter(
             self.constellation.real,
             self.constellation.imag,
@@ -396,7 +398,7 @@ class OFDMSimulator:
         ax1.legend()
         ax1.axis("equal")
 
-        # Before equalization
+        # 2. Before equalization (top-right)
         sample_size = min(1000, len(self.rx_symbols_before_eq))
         sample_indices = np.random.choice(
             len(self.rx_symbols_before_eq), sample_size, replace=False
@@ -427,7 +429,7 @@ class OFDMSimulator:
         ax2.legend()
         ax2.axis("equal")
 
-        # After equalization
+        # 3. After equalization (bottom-left)
         sample_symbols_eq = self.rx_symbols_after_eq[sample_indices]
 
         ax3.scatter(
@@ -453,6 +455,93 @@ class OFDMSimulator:
         ax3.set_ylabel("Quadrature")
         ax3.legend()
         ax3.axis("equal")
+
+        # 4. Channel frequency response and transmitted signal PSD (bottom-right)
+        # Pad channel taps to N points for frequency response
+        channel_padded = np.zeros(self.N, dtype=np.complex64)
+        channel_padded[: len(self.channel_taps)] = self.channel_taps
+
+        # Calculate channel frequency response
+        H = np.fft.fft(channel_padded)
+        frequencies = np.arange(self.N) / self.N  # Normalized frequency (0 to 1)
+
+        # Calculate transmitted signal PSD from modulated OFDM time-domain signal
+        # Compute PSD using FFT-based method
+        # Take several OFDM symbols for better PSD estimation
+        tx_psd_db = None
+        if self.tx_signal is not None:
+            symbol_length = self.N + self.N_cp
+            num_symbols_for_psd = min(10, len(self.tx_signal) // symbol_length)
+
+            if num_symbols_for_psd > 0:
+                # Extract multiple OFDM symbols and compute average PSD
+                psd_estimates = []
+                for i in range(num_symbols_for_psd):
+                    start_idx = i * symbol_length
+                    end_idx = start_idx + symbol_length
+                    ofdm_symbol = self.tx_signal[start_idx:end_idx]
+
+                    # Zero-pad to match N points for fair comparison with channel
+                    if len(ofdm_symbol) > self.N:
+                        # Take middle N samples (remove CP effect)
+                        ofdm_symbol = ofdm_symbol[self.N_cp : self.N_cp + self.N]
+                    elif len(ofdm_symbol) < self.N:
+                        # Zero-pad if needed
+                        padded = np.zeros(self.N, dtype=np.complex64)
+                        padded[: len(ofdm_symbol)] = ofdm_symbol
+                        ofdm_symbol = padded
+
+                    # Compute PSD: |FFT|^2
+                    fft_signal = np.fft.fft(ofdm_symbol)
+                    psd = np.abs(fft_signal) ** 2
+                    psd_estimates.append(psd)
+
+                # Average PSD across multiple symbols
+                avg_psd = np.mean(psd_estimates, axis=0)
+                # Convert to dB
+                tx_psd_db = 10 * np.log10(avg_psd + 1e-12)
+
+        print("tx_psd_db = ", tx_psd_db)
+
+        # Plot channel magnitude and transmitted PSD
+        channel_magnitude_db = 20 * np.log10(np.abs(H) + 1e-12)
+        ax4_mag = ax4
+        line_channel = ax4_mag.plot(
+            frequencies,
+            channel_magnitude_db,
+            "b-",
+            linewidth=2,
+            label="Channel Response",
+        )
+        if tx_psd_db is not None:
+            line_tx = ax4_mag.plot(
+                frequencies,
+                tx_psd_db,
+                "g-",
+                linewidth=1.5,
+                alpha=0.7,
+                label="TX Signal PSD",
+            )
+        ax4_mag.set_xlabel("Normalized Frequency")
+        ax4_mag.set_ylabel("Magnitude (dB)", color="b")
+        ax4_mag.tick_params(axis="y", labelcolor="b")
+        ax4_mag.grid(True, alpha=0.3)
+
+        # Plot channel phase on secondary y-axis
+        ax4_phase = ax4_mag.twinx()
+        phase_deg = np.angle(H) * 180 / np.pi
+        line_phase = ax4_phase.plot(
+            frequencies, phase_deg, "r--", linewidth=2, alpha=0.8, label="Channel Phase"
+        )
+        ax4_phase.set_ylabel("Phase (degrees)", color="r")
+        ax4_phase.tick_params(axis="y", labelcolor="r")
+
+        # Combined legend
+        lines = line_channel + line_tx + line_phase
+        labels = [l.get_label() for l in lines]
+        ax4_mag.legend(lines, labels, loc="upper right")
+
+        ax4_mag.set_title("Channel Response & TX Signal PSD")
 
         plt.tight_layout()
 
@@ -498,8 +587,8 @@ Special characters: áéíóú ñ ç 中文 русский العربية 🌟�
     # channel_taps = [1.0]  # AWGN only (ideal channel)
     # channel_taps = [0.8, 0, 0.6j]  # Light frequency-selective fading
     # channel_taps = [0.7, 0.5, 0, -0.3j]  # Moderate frequency-selective fading
-    channel_taps = [1.0, 0, 0.9, 0, 0.8]  # Deep spectral nulls (severe fading)
-    # channel_taps = [0.6, 0.4, 0.3, 0.2, 0.1]  # Exponential decay (typical urban)
+    # channel_taps = [1.0, 0, 0.9, 0, 0.8]  # Deep spectral nulls (severe fading)
+    channel_taps = [0.6, 0.4, 0.3, 0.2, 0.1]  # Exponential decay (typical urban)
     # channel_taps = [0.5, -0.3, 0.4j, -0.2j]  # Complex fading with phase variations
     # channel_taps = [1.0, 0, 0, 0, 0.9]  # Delayed strong reflection (two-path model)
     # channel_taps = [0.707, 0, 0.707]  # Equal power two-path (RMS delay=1 sample)
@@ -508,8 +597,8 @@ Special characters: áéíóú ñ ç 中文 русский العربية 🌟�
     simulator = OFDMSimulator(
         N=64,  # Number of subcarriers
         N_cp=16,  # Cyclic prefix length
-        modulation="BPSK",  # Modulation scheme, supported: BPSK, QPSK, 16QAM
-        snr_db=30.0,  # SNR in dB
+        modulation="QPSK",  # Modulation scheme, supported: BPSK, QPSK, 16QAM
+        snr_db=20.0,  # SNR in dB
         channel_taps=channel_taps,
     )
 
