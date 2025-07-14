@@ -36,6 +36,7 @@ class OFDMSimulator:
         self.N_cp = N_cp
         self.modulation = modulation
         self.snr_db = snr_db
+        self.snr_linear = 10 ** (snr_db / 10.0)  # Precompute linear SNR
         self.channel_taps = channel_taps or [1.0]  # AWGN channel by default
 
         # Modulation parameters
@@ -233,16 +234,21 @@ class OFDMSimulator:
 
         return signal + noise
 
-    # Modified OFDM demodulation with channel estimation
+    # Update ofdm_demodulate method with MMSE equalization
     def ofdm_demodulate(
         self, received_signal: np.ndarray, original_num_symbols: int
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """OFDM demodulation with pilot-based channel estimation."""
+        """OFDM demodulation with MMSE equalization."""
         symbol_length = self.N + self.N_cp
         num_ofdm_symbols = len(received_signal) // symbol_length
 
         symbols_before_eq = []
         symbols_after_eq = []
+
+        # Compute noise variance (normalized for unit-power constellations)
+        # Since constellations are normalized to unit average power,
+        # noise variance is 1/(SNR_linear)
+        noise_variance = 1.0 / self.snr_linear
 
         for i in range(num_ofdm_symbols):
             start_idx = i * symbol_length
@@ -265,8 +271,15 @@ class OFDMSimulator:
                 np.arange(self.N), self.pilot_indices, H_est_pilots, period=self.N
             )
 
-            # Zero-forcing equalization
-            equalized = freq_domain / (H_est + 1e-10)
+            # MMSE equalization
+            H_est_conj = H_est.conjugate()
+            H_est_power = np.abs(H_est) ** 2
+
+            # Compute MMSE weights
+            mmse_weights = H_est_conj / (H_est_power + noise_variance)
+
+            # Apply MMSE equalization
+            equalized = mmse_weights * freq_domain
             symbols_after_eq.extend(equalized[self.data_indices])
 
         # Truncate to original number of symbols
@@ -483,20 +496,20 @@ Special characters: áéíóú ñ ç 中文 русский العربية 🌟�
 
     # Channel Configuration - Uncomment one of the following:
     # channel_taps = [1.0]  # AWGN only (ideal channel)
-    # channel_taps = [1.0, 0.0, 0.0, 0.0]  # Identity with padding
-    # channel_taps = [0, 0, 0, 1.0]  # Identity with delay
-    # channel_taps = [0.8, 0.0, 0.0, 0.3]  # Multipath channel (default)
-    # channel_taps = [1.0, 0.5, 0.25]  # Short multipath
-    # channel_taps = [0.9, 0.3, 0.1]  # Moderate multipath
-    channel_taps = [1.0, -0.2, 0.1, -0.05]  # Multipath with negative taps
-    # channel_taps = [1.0, 1.0]
+    # channel_taps = [0.8, 0, 0.6j]  # Light frequency-selective fading
+    # channel_taps = [0.7, 0.5, 0, -0.3j]  # Moderate frequency-selective fading
+    channel_taps = [1.0, 0, 0.9, 0, 0.8]  # Deep spectral nulls (severe fading)
+    # channel_taps = [0.6, 0.4, 0.3, 0.2, 0.1]  # Exponential decay (typical urban)
+    # channel_taps = [0.5, -0.3, 0.4j, -0.2j]  # Complex fading with phase variations
+    # channel_taps = [1.0, 0, 0, 0, 0.9]  # Delayed strong reflection (two-path model)
+    # channel_taps = [0.707, 0, 0.707]  # Equal power two-path (RMS delay=1 sample)
 
     # OFDM Simulation Parameters
     simulator = OFDMSimulator(
         N=64,  # Number of subcarriers
         N_cp=16,  # Cyclic prefix length
-        modulation="QPSK",  # Modulation scheme, supported: BPSK, QPSK, 16QAM
-        snr_db=10.0,  # SNR in dB
+        modulation="BPSK",  # Modulation scheme, supported: BPSK, QPSK, 16QAM
+        snr_db=30.0,  # SNR in dB
         channel_taps=channel_taps,
     )
 
