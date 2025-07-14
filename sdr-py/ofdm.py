@@ -58,6 +58,24 @@ class OFDMSimulator:
         self.rx_symbols_before_eq = np.ndarray([])
         self.rx_symbols_after_eq = np.ndarray([])
 
+        # Comb-type pilot sequence for channel equalization
+        self.pilot_spacing = 8  # Space between pilots
+        self.pilot_symbol = 1.0  # Base pilot symbol (BPSK)
+        self.pilot_indices = np.arange(0, self.N, self.pilot_spacing)
+        self.num_pilots = len(self.pilot_indices)
+        self.data_indices = np.array(
+            [i for i in range(self.N) if i not in self.pilot_indices]
+        )
+
+        # Generate alternating pilot sequence
+        self.pilot_sequence = np.array(
+            [
+                self.pilot_symbol * (1 if i % 2 == 0 else -1)
+                for i in range(self.num_pilots)
+            ],
+            dtype=np.complex64,
+        )
+
     def _generate_bpsk_constellation(self) -> np.ndarray:
         """Generate BPSK constellation points."""
         return np.array([1, -1])  # 0 or 1
@@ -125,6 +143,34 @@ class OFDMSimulator:
 
         return np.array(symbols, dtype=np.complex64)
 
+    # New method to insert pilots into OFDM symbols
+    def _insert_pilots(self, data_symbols: np.ndarray) -> np.ndarray:
+        """Insert pilots into OFDM symbols in frequency domain."""
+        # Pad data to multiple of (N - num_pilots)
+        symbols_per_ofdm = self.N - self.num_pilots
+        remainder = len(data_symbols) % symbols_per_ofdm
+        if remainder:
+            padding = np.zeros(symbols_per_ofdm - remainder, dtype=np.complex64)
+            data_symbols = np.append(data_symbols, padding)
+
+        num_ofdm_symbols = len(data_symbols) // symbols_per_ofdm
+        data_matrix = data_symbols.reshape(num_ofdm_symbols, symbols_per_ofdm)
+
+        ofdm_symbols_freq = []
+        for i in range(num_ofdm_symbols):
+            # Create empty frequency domain symbol
+            freq_symbol = np.zeros(self.N, dtype=np.complex64)
+
+            # Insert data
+            freq_symbol[self.data_indices] = data_matrix[i]
+
+            # Insert pilots
+            freq_symbol[self.pilot_indices] = self.pilot_sequence
+
+            ofdm_symbols_freq.append(freq_symbol)
+
+        return np.array(ofdm_symbols_freq, dtype=np.complex64)
+
     def symbols_to_bits(self, symbols: np.ndarray) -> np.ndarray:
         """Demap symbols to bits using minimum distance detection."""
         bits = []
@@ -139,30 +185,15 @@ class OFDMSimulator:
 
         return np.array(bits, dtype=np.uint8)
 
+    # Modified OFDM modulation
     def ofdm_modulate(self, symbols: np.ndarray) -> np.ndarray:
-        """
-        OFDM modulation: S/P -> IFFT -> Add CP -> P/S
-
-        Args:
-            symbols: Complex symbols to modulate
-
-        Returns:
-            Time-domain OFDM signal
-        """
-        # Pad symbols to multiple of N
-        remainder = len(symbols) % self.N
-        if remainder:
-            symbols = np.append(
-                symbols, np.zeros(self.N - remainder, dtype=np.complex64)
-            )
-
-        # Reshape into OFDM symbols (each row is one OFDM symbol)
-        num_ofdm_symbols = len(symbols) // self.N
-        symbols_matrix = symbols.reshape(num_ofdm_symbols, self.N)
+        """OFDM modulation with pilot insertion."""
+        # Insert pilots into frequency domain symbols
+        ofdm_symbols_freq = self._insert_pilots(symbols)
+        num_ofdm_symbols = len(ofdm_symbols_freq)
 
         ofdm_signal = []
-
-        for ofdm_sym in symbols_matrix:
+        for ofdm_sym in ofdm_symbols_freq:
             # IFFT to convert to time domain
             time_domain = np.fft.ifft(ofdm_sym)
 
@@ -202,51 +233,41 @@ class OFDMSimulator:
 
         return signal + noise
 
+    # Modified OFDM demodulation with channel estimation
     def ofdm_demodulate(
         self, received_signal: np.ndarray, original_num_symbols: int
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        OFDM demodulation: S/P -> Remove CP -> FFT -> Equalization
-
-        Args:
-            received_signal: Received time-domain signal
-            original_num_symbols: Number of original data symbols
-
-        Returns:
-            Tuple of (symbols_before_eq, symbols_after_eq)
-        """
-        # Calculate number of OFDM symbols
+        """OFDM demodulation with pilot-based channel estimation."""
         symbol_length = self.N + self.N_cp
         num_ofdm_symbols = len(received_signal) // symbol_length
 
         symbols_before_eq = []
         symbols_after_eq = []
 
-        # Estimate channel frequency response
-        H = np.fft.fft(np.pad(self.channel_taps, (0, self.N - len(self.channel_taps))))
-
         for i in range(num_ofdm_symbols):
             start_idx = i * symbol_length
             end_idx = start_idx + symbol_length
-
-            if end_idx > len(received_signal):
-                break
-
-            # Extract one OFDM symbol
             ofdm_symbol = received_signal[start_idx:end_idx]
 
             # Remove cyclic prefix
-            ofdm_symbol_no_cp = ofdm_symbol[self.N_cp :]
+            ofdm_symbol_no_cp = ofdm_symbol[self.N_cp : self.N_cp + self.N]
 
             # FFT to frequency domain
             freq_domain = np.fft.fft(ofdm_symbol_no_cp)
-            symbols_before_eq.extend(freq_domain)
+            symbols_before_eq.extend(freq_domain[self.data_indices])
 
-            # Channel equalization (Zero-forcing)
-            equalized = freq_domain / (
-                H + 1e-10
-            )  # Small epsilon to avoid division by zero
-            symbols_after_eq.extend(equalized)
+            # Channel estimation using pilots
+            received_pilots = freq_domain[self.pilot_indices]
+            H_est_pilots = received_pilots / self.pilot_sequence
+
+            # Linear interpolation for full channel response
+            H_est = np.interp(
+                np.arange(self.N), self.pilot_indices, H_est_pilots, period=self.N
+            )
+
+            # Zero-forcing equalization
+            equalized = freq_domain / (H_est + 1e-10)
+            symbols_after_eq.extend(equalized[self.data_indices])
 
         # Truncate to original number of symbols
         symbols_before_eq = np.array(
@@ -461,20 +482,20 @@ Special characters: áéíóú ñ ç 中文 русский العربية 🌟�
         return
 
     # Channel Configuration - Uncomment one of the following:
-    # channel_taps = [1.0]                        # AWGN only (ideal channel)
+    # channel_taps = [1.0]  # AWGN only (ideal channel)
     # channel_taps = [1.0, 0.0, 0.0, 0.0]  # Identity with padding
     # channel_taps = [0, 0, 0, 1.0]  # Identity with delay
     # channel_taps = [0.8, 0.0, 0.0, 0.3]  # Multipath channel (default)
     # channel_taps = [1.0, 0.5, 0.25]  # Short multipath
     # channel_taps = [0.9, 0.3, 0.1]  # Moderate multipath
-    # channel_taps = [1.0, -0.2, 0.1, -0.05]  # Multipath with negative taps
-    channel_taps = [1.0, 1.0]
+    channel_taps = [1.0, -0.2, 0.1, -0.05]  # Multipath with negative taps
+    # channel_taps = [1.0, 1.0]
 
     # OFDM Simulation Parameters
     simulator = OFDMSimulator(
         N=64,  # Number of subcarriers
         N_cp=16,  # Cyclic prefix length
-        modulation="BPSK",  # Modulation scheme, supported: BPSK, QPSK, 16QAM
+        modulation="QPSK",  # Modulation scheme, supported: BPSK, QPSK, 16QAM
         snr_db=10.0,  # SNR in dB
         channel_taps=channel_taps,
     )
