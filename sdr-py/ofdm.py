@@ -465,44 +465,6 @@ class OFDMSimulator:
         H = np.fft.fft(channel_padded)
         frequencies = np.arange(self.N) / self.N  # Normalized frequency (0 to 1)
 
-        # Calculate transmitted signal PSD from modulated OFDM time-domain signal
-        # Compute PSD using FFT-based method
-        # Take several OFDM symbols for better PSD estimation
-        tx_psd_db = None
-        if self.tx_signal is not None:
-            symbol_length = self.N + self.N_cp
-            num_symbols_for_psd = min(10, len(self.tx_signal) // symbol_length)
-
-            if num_symbols_for_psd > 0:
-                # Extract multiple OFDM symbols and compute average PSD
-                psd_estimates = []
-                for i in range(num_symbols_for_psd):
-                    start_idx = i * symbol_length
-                    end_idx = start_idx + symbol_length
-                    ofdm_symbol = self.tx_signal[start_idx:end_idx]
-
-                    # Zero-pad to match N points for fair comparison with channel
-                    if len(ofdm_symbol) > self.N:
-                        # Take middle N samples (remove CP effect)
-                        ofdm_symbol = ofdm_symbol[self.N_cp : self.N_cp + self.N]
-                    elif len(ofdm_symbol) < self.N:
-                        # Zero-pad if needed
-                        padded = np.zeros(self.N, dtype=np.complex64)
-                        padded[: len(ofdm_symbol)] = ofdm_symbol
-                        ofdm_symbol = padded
-
-                    # Compute PSD: |FFT|^2
-                    fft_signal = np.fft.fft(ofdm_symbol)
-                    psd = np.abs(fft_signal) ** 2
-                    psd_estimates.append(psd)
-
-                # Average PSD across multiple symbols
-                avg_psd = np.mean(psd_estimates, axis=0)
-                # Convert to dB
-                tx_psd_db = 10 * np.log10(avg_psd + 1e-12)
-
-        print("tx_psd_db = ", tx_psd_db)
-
         # Plot channel magnitude and transmitted PSD
         channel_magnitude_db = 20 * np.log10(np.abs(H) + 1e-12)
         ax4_mag = ax4
@@ -513,15 +475,6 @@ class OFDMSimulator:
             linewidth=2,
             label="Channel Response",
         )
-        if tx_psd_db is not None:
-            line_tx = ax4_mag.plot(
-                frequencies,
-                tx_psd_db,
-                "g-",
-                linewidth=1.5,
-                alpha=0.7,
-                label="TX Signal PSD",
-            )
         ax4_mag.set_xlabel("Normalized Frequency")
         ax4_mag.set_ylabel("Magnitude (dB)", color="b")
         ax4_mag.tick_params(axis="y", labelcolor="b")
@@ -537,7 +490,7 @@ class OFDMSimulator:
         ax4_phase.tick_params(axis="y", labelcolor="r")
 
         # Combined legend
-        lines = line_channel + line_tx + line_phase
+        lines = line_channel + line_phase
         labels = [l.get_label() for l in lines]
         ax4_mag.legend(lines, labels, loc="upper right")
 
